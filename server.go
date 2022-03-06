@@ -8,6 +8,7 @@ import (
 	"github.com/EndlessCheng/mahjong-helper/util"
 	"github.com/EndlessCheng/mahjong-helper/util/debug"
 	"github.com/EndlessCheng/mahjong-helper/util/model"
+	"github.com/EndlessCheng/mahjong-helper/webapi"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -52,6 +53,8 @@ type mjHandler struct {
 	majsoulCurrentActionIndex       int
 
 	majsoulCurrentRoundActions majsoulRoundActions
+
+	result webapi.Result
 }
 
 func (h *mjHandler) logError(err error) {
@@ -76,12 +79,21 @@ func (h *mjHandler) index(c echo.Context) error {
 
 // 以 JSON 格式返回游戏相关信息
 func (h *mjHandler) apiGetStatus(c echo.Context) error {
-	data := h.tenhouRoundData.ApiData
+	data := h.majsoulRoundData.ApiData
 	b, err := json.Marshal(data)
 	if err != nil {
-        h.logError(err)
+		h.logError(err)
 		return c.String(http.StatusBadRequest, err.Error())
-    }
+	}
+	return c.String(http.StatusOK, string(b[:]))
+}
+
+func (h *mjHandler) analysisResult(c echo.Context) error {
+	b, err := json.Marshal(h.result)
+	if err != nil {
+		h.logError(err)
+		return c.String(http.StatusBadRequest, err.Error())
+	}
 	return c.String(http.StatusOK, string(b[:]))
 }
 
@@ -146,8 +158,12 @@ func (h *mjHandler) runAnalysisTenhouMessageTask() {
 
 		h.tenhouRoundData.msg = &d
 		h.tenhouRoundData.originJSON = originJSON
-		if err := h.tenhouRoundData.analysis(); err != nil {
+		err, result := h.tenhouRoundData.analysis()
+		if err != nil {
 			h.logError(err)
+		}
+		if result != nil {
+			h.result = *result
 		}
 	}
 }
@@ -382,8 +398,12 @@ func (h *mjHandler) _analysisMajsoulRoundData(data *majsoulMessage, originJSON s
 	//}
 	h.majsoulRoundData.msg = data
 	h.majsoulRoundData.originJSON = originJSON
-	if err := h.majsoulRoundData.analysis(); err != nil {
+	err, result := h.majsoulRoundData.analysis()
+	if err != nil {
 		h.logError(err)
+	}
+	if result != nil {
+		h.result = *result
 	}
 }
 
@@ -533,6 +553,7 @@ func runServer(isHTTPS bool, port int) (err error) {
 	e.Use(middleware.CORS())
 	e.GET("/", h.index)
 	e.GET("/api", h.apiGetStatus)
+	e.GET("/result", h.analysisResult)
 	e.POST("/debug", h.index)
 	e.POST("/analysis", h.analysis)
 	e.POST("/tenhou", h.analysisTenhou)

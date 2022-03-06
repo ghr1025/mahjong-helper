@@ -1,12 +1,13 @@
 package main
 
 import (
-	"github.com/EndlessCheng/mahjong-helper/util"
 	"fmt"
+	"github.com/EndlessCheng/mahjong-helper/util"
+	"github.com/EndlessCheng/mahjong-helper/util/model"
+	"github.com/EndlessCheng/mahjong-helper/webapi"
+	"github.com/fatih/color"
 	"io"
 	"strings"
-	"github.com/fatih/color"
-	"github.com/EndlessCheng/mahjong-helper/util/model"
 )
 
 func simpleBestDiscardTile(playerInfo *model.PlayerInfo) int {
@@ -46,11 +47,15 @@ func humanHands(playerInfo *model.PlayerInfo) string {
 	return humanHands
 }
 
-func analysisPlayerWithRisk(writer io.Writer, playerInfo *model.PlayerInfo, mixedRiskTable riskTable) error {
+func analysisPlayerWithRisk(writer io.Writer, results *webapi.Result, playerInfo *model.PlayerInfo, mixedRiskTable riskTable) error {
 	// 手牌
 	humanTiles := humanHands(playerInfo)
 	fmt.Println(humanTiles)
 	fmt.Println(strings.Repeat("=", len(humanTiles)))
+	results.Human.SetHandTiles(playerInfo.HandTiles34)
+	for _, m := range playerInfo.Melds {
+		results.Human.Melds = append(results.Human.Melds, m.Tiles)
+	}
 
 	countOfTiles := util.CountOfTiles34(playerInfo.HandTiles34)
 	switch countOfTiles % 3 {
@@ -62,7 +67,14 @@ func analysisPlayerWithRisk(writer io.Writer, playerInfo *model.PlayerInfo, mixe
 			result13:       result,
 			mixedRiskTable: mixedRiskTable,
 		}
-		r.printWaitsWithImproves13_oneRow(writer)
+		option := webapi.Option{}
+		r.printWaitsWithImproves13_oneRow(writer, &option)
+		options := webapi.Options{
+			Shanten: result.Shanten,
+			Info:    "当前",
+			Options: []webapi.Option{option},
+		}
+		results.Options = append(results.Options, options)
 	case 2:
 		// 分析手牌
 		shanten, results14, incShantenResults14 := util.CalculateShantenWithImproves14(playerInfo)
@@ -70,26 +82,34 @@ func analysisPlayerWithRisk(writer io.Writer, playerInfo *model.PlayerInfo, mixe
 		// 提示信息
 		if shanten == -1 {
 			color.HiRed("【已和牌】")
+			results.Info = "已和牌"
 		} else if shanten == 0 {
 			if len(results14) > 0 {
 				r13 := results14[0].Result13
 				if r13.RiichiPoint > 0 && r13.FuritenRate == 0 && r13.DamaPoint >= 5200 && r13.DamaWaits.AllCount() == r13.Waits.AllCount() {
 					color.HiGreen("默听打点充足：追求和率默听，追求打点立直")
+					results.Info = "默听打点充足：追求和率默听，追求打点立直"
 				}
 				// 局收支相近时，提示：局收支相近，追求和率打xx，追求打点打xx
 			}
 		} else if shanten == 1 {
 			// 早巡中巡门清时，提醒向听倒退
 			if len(playerInfo.DiscardTiles) < 9 && !playerInfo.IsNaki() {
-				alertBackwardToShanten2(results14, incShantenResults14)
+				results.Info = alertBackwardToShanten2(results14, incShantenResults14)
 			}
 		}
 
 		// TODO: 接近流局时提示河底是哪家
 
 		// 何切分析结果
-		printResults14WithRisk(writer, results14, mixedRiskTable)
-		printResults14WithRisk(writer, incShantenResults14, mixedRiskTable)
+		options := printResults14WithRisk(writer, results14, mixedRiskTable)
+		if options != nil {
+			results.Options = append(results.Options, *options)
+		}
+		options = printResults14WithRisk(writer, incShantenResults14, mixedRiskTable)
+		if options != nil {
+			results.Options = append(results.Options, *options)
+		}
 	default:
 		err := fmt.Errorf("参数错误: %d 张牌", countOfTiles)
 		if debugMode {
@@ -108,7 +128,7 @@ func analysisPlayerWithRisk(writer io.Writer, playerInfo *model.PlayerInfo, mixe
 // isRedFive: 此舍牌是否为赤5
 // allowChi: 是否能吃
 // mixedRiskTable: 危险度表
-func analysisMeld(writer io.Writer, playerInfo *model.PlayerInfo, targetTile34 int, isRedFive bool, allowChi bool, mixedRiskTable riskTable) error {
+func analysisMeld(writer io.Writer, results *webapi.Result, playerInfo *model.PlayerInfo, targetTile34 int, isRedFive bool, allowChi bool, mixedRiskTable riskTable) error {
 	if handsCount := util.CountOfTiles34(playerInfo.HandTiles34); handsCount%3 != 1 {
 		return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, playerInfo.HandTiles34)
 	}
@@ -125,6 +145,10 @@ func analysisMeld(writer io.Writer, playerInfo *model.PlayerInfo, targetTile34 i
 	handsTobeNaki := humanTiles + " " + model.SepTargetTile + " " + util.Tile34ToStr(targetTile34) + "?"
 	fmt.Println(handsTobeNaki)
 	fmt.Println(strings.Repeat("=", len(handsTobeNaki)))
+	results.Human.SetHandTiles(playerInfo.HandTiles34)
+	for _, m := range playerInfo.Melds {
+		results.Human.Melds = append(results.Human.Melds, m.Tiles)
+	}
 
 	// 原始手牌分析结果
 	fmt.Println("当前" + util.NumberToChineseShanten(result.Shanten) + "：")
@@ -133,24 +157,39 @@ func analysisMeld(writer io.Writer, playerInfo *model.PlayerInfo, targetTile34 i
 		result13:       result,
 		mixedRiskTable: mixedRiskTable,
 	}
-	r.printWaitsWithImproves13_oneRow(writer)
+	option := webapi.Option{}
+	r.printWaitsWithImproves13_oneRow(writer, &option)
+	options := webapi.Options{
+		Shanten: result.Shanten,
+		Info:    "当前",
+		Options: []webapi.Option{option},
+	}
+	results.Options = append(results.Options, options)
 
 	// 提示信息
 	// TODO: 局收支相近时，提示：局收支相近，追求和率打xx，追求打点打xx
 	if shanten == -1 {
 		color.HiRed("【已和牌】")
+		results.Info = "已和牌"
 	} else if shanten <= 1 {
 		// 鸣牌后听牌或一向听，提示型听
 		if len(results14) > 0 && results14[0].LeftDrawTilesCount > 0 && results14[0].LeftDrawTilesCount <= 16 {
 			color.HiGreen("考虑型听？")
+			results.Info = "考虑型听？"
 		}
 	}
 
 	// TODO: 接近流局时提示河底是哪家
 
 	// 鸣牌何切分析结果
-	printResults14WithRisk(writer, results14, mixedRiskTable)
-	printResults14WithRisk(writer, incShantenResults14, mixedRiskTable)
+	opts := printResults14WithRisk(writer, results14, mixedRiskTable)
+	if opts != nil {
+		results.Options = append(results.Options, *opts)
+	}
+	opts = printResults14WithRisk(writer, incShantenResults14, mixedRiskTable)
+	if opts != nil {
+		results.Options = append(results.Options, *opts)
+	}
 	return nil
 }
 
@@ -224,6 +263,8 @@ func analysisHumanTiles(writer io.Writer, humanTilesInfo *model.HumanTilesInfo) 
 		}
 	}
 
+	results := webapi.NewResult()
+
 	if humanTilesInfo.HumanTargetTile != "" {
 		if tileCount%3 == 2 {
 			return nil, fmt.Errorf("输入错误: %s 是 %d 张牌", humanTilesInfo.HumanTiles, tileCount)
@@ -232,13 +273,13 @@ func analysisHumanTiles(writer io.Writer, humanTilesInfo *model.HumanTilesInfo) 
 		if er != nil {
 			return nil, er
 		}
-		if er := analysisMeld(writer, playerInfo, targetTile34, isRedFive, true, nil); er != nil {
+		if er := analysisMeld(writer, &results, playerInfo, targetTile34, isRedFive, true, nil); er != nil {
 			return nil, er
 		}
 		return
 	}
 
 	playerInfo.IsTsumo = humanTilesInfo.IsTsumo
-	err = analysisPlayerWithRisk(writer, playerInfo, nil)
+	err = analysisPlayerWithRisk(writer, &results, playerInfo, nil)
 	return
 }

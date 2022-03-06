@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/EndlessCheng/mahjong-helper/util"
 	"fmt"
-	"os"
+	"github.com/EndlessCheng/mahjong-helper/util"
 	"github.com/EndlessCheng/mahjong-helper/util/model"
+	"github.com/EndlessCheng/mahjong-helper/webapi"
+	"os"
 )
 
 func interact(humanTilesInfo *model.HumanTilesInfo) error {
@@ -15,6 +16,8 @@ func interact(humanTilesInfo *model.HumanTilesInfo) error {
 			}
 		}()
 	}
+
+	results := webapi.NewResult()
 
 	playerInfo, err := analysisHumanTiles(os.Stdout, humanTilesInfo)
 	if err != nil {
@@ -67,7 +70,7 @@ func interact(humanTilesInfo *model.HumanTilesInfo) error {
 			tiles34[tile]--
 			playerInfo.DiscardTiles = append(playerInfo.DiscardTiles, tile) // 仅判断振听用
 		}
-		if err := analysisPlayerWithRisk(os.Stdout, playerInfo, nil); err != nil {
+		if err := analysisPlayerWithRisk(os.Stdout, &results, playerInfo, nil); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}

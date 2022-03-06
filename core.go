@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/EndlessCheng/mahjong-helper/webapi"
 	"github.com/EndlessCheng/mahjong-helper/util"
 	"github.com/EndlessCheng/mahjong-helper/util/model"
+	"github.com/EndlessCheng/mahjong-helper/webapi"
 	"github.com/fatih/color"
 )
 
@@ -297,13 +297,16 @@ func (d *roundData) doraList() (dl []int) {
 	return model.DoraList(d.doraIndicators, d.playerNumber == 3)
 }
 
-func (d *roundData) printDiscards() {
+func (d *roundData) printDiscards() []webapi.PlayerInfo {
+	var info []webapi.PlayerInfo
 	// 三麻的北家是不需要打印的
 	for i := len(d.players) - 1; i >= 1; i-- {
 		if player := d.players[i]; d.playerNumber != 3 || player.selfWindTile != 30 {
 			player.printDiscards()
+			info = append(info, player.getInfo())
 		}
 	}
+	return info
 }
 
 // 分析34种牌的危险度
@@ -472,7 +475,7 @@ func (d *roundData) newModelPlayerInfo() *model.PlayerInfo {
 	}
 }
 
-func (d *roundData) analysis() error {
+func (d *roundData) analysis() (error, *webapi.Result) {
 	d.ApiData.Init()
 	writer := webapi.ApiDataConvertor{&d.ApiData}
 
@@ -505,13 +508,13 @@ func (d *roundData) analysis() error {
 	}
 
 	if d.parser.SkipMessage() {
-		return nil
+		return nil, nil
 	}
 
 	// 若自家立直，则进入看戏模式
 	// TODO: 见逃判断
 	if !d.parser.IsInit() && !d.parser.IsRoundWin() && !d.parser.IsRyuukyoku() && d.players[0].isReached {
-		return nil
+		return nil, nil
 	}
 
 	if debugMode {
@@ -542,7 +545,7 @@ func (d *roundData) analysis() error {
 				d.gameMode = gameModeMatch
 				fmt.Printf("游戏即将开始，您分配到的座位是：")
 				color.HiGreen(util.MahjongZH[d.players[0].selfWindTile])
-				return nil
+				return nil, nil
 			} else {
 				// 根据 selfSeat 和当前的 roundNumber 计算当前局的 dealer
 				newDealer := (4 - d.parser.GetSelfSeat() + roundNumber) % 4
@@ -576,7 +579,7 @@ func (d *roundData) analysis() error {
 		}
 
 		if d.skipOutput {
-			return nil
+			return nil, nil
 		}
 
 		// 牌谱模式下，打印舍牌推荐
@@ -584,16 +587,22 @@ func (d *roundData) analysis() error {
 			currentRoundCache.print()
 		}
 
+		results := webapi.NewResult()
 		color.New(color.FgHiGreen).Printf("%s", util.MahjongZH[d.roundWindTile])
 		fmt.Printf("%d局开始，自风为", roundNumber%4+1)
 		color.New(color.FgHiGreen).Printf("%s", util.MahjongZH[d.players[0].selfWindTile])
 		fmt.Println()
+		results.InitRound(d.roundWindTile, d.players[0].selfWindTile, d.doraIndicators)
 		info := fmt.Sprintln(util.TilesToMahjongZHInterface(d.doraIndicators)...)
 		info = info[:len(info)-1]
 		color.HiYellow("宝牌指示牌是 " + info)
 		fmt.Println()
 		// TODO: 显示地和概率
-		return analysisPlayerWithRisk(writer, playerInfo, nil)
+		err := analysisPlayerWithRisk(writer, &results, playerInfo, nil)
+		if err != nil {
+			return err, nil
+		}
+		return nil, &results
 	case d.parser.IsOpen():
 		// 某家鸣牌（含暗杠、加杠）
 		who, meld, kanDoraIndicator := d.parser.ParseOpen()
@@ -647,7 +656,7 @@ func (d *roundData) analysis() error {
 			if debugMode {
 				if who == 0 {
 					if handsCount := util.CountOfTiles34(d.counts); handsCount%3 != 1 {
-						return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts)
+						return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts), nil
 					}
 				}
 			}
@@ -695,11 +704,11 @@ func (d *roundData) analysis() error {
 			if debugMode {
 				if meldType == meldTypeMinkan || meldType == meldTypeAnkan {
 					if handsCount := util.CountOfTiles34(d.counts); handsCount%3 != 1 {
-						return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts)
+						return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts), nil
 					}
 				} else {
 					if handsCount := util.CountOfTiles34(d.counts); handsCount%3 != 2 {
-						return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts)
+						return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts), nil
 					}
 				}
 			}
@@ -721,7 +730,7 @@ func (d *roundData) analysis() error {
 	case d.parser.IsFuriten():
 		// 振听
 		if d.skipOutput {
-			return nil
+			return nil, nil
 		}
 		color.HiYellow("振听")
 		//case "U", "V", "W":
@@ -762,7 +771,7 @@ func (d *roundData) analysis() error {
 		}
 
 		if d.skipOutput {
-			return nil
+			return nil, nil
 		}
 
 		// 牌谱模式下，打印舍牌推荐
@@ -770,16 +779,25 @@ func (d *roundData) analysis() error {
 			currentRoundCache.print()
 		}
 
+		results := webapi.NewResult()
+		results.InitRound(d.roundWindTile, d.players[0].selfWindTile, d.doraIndicators)
 		// 打印他家舍牌信息
-		d.printDiscards()
+		results.Players = d.printDiscards()
 		fmt.Println()
 
 		// 打印手牌对各家的安全度
-		riskTables.printWithHands(d.counts, d.leftCounts)
+		risksInfo, nc, oc := riskTables.printWithHands(d.counts, d.leftCounts)
+		results.Human.RisksInfo = risksInfo
+		results.Human.NCSafeTiles = nc
+		results.Human.OCSafeTiles = oc
 
 		// 打印何切推荐
 		// TODO: 根据是否听牌/一向听、打点、巡目、和率等进行攻守判断
-		return analysisPlayerWithRisk(writer, playerInfo, mixedRiskTable)
+		err := analysisPlayerWithRisk(writer, &results, playerInfo, mixedRiskTable)
+		if err != nil {
+			return err, nil
+		}
+		return nil, &results
 	case d.parser.IsDiscard():
 		who, discardTile, isRedFive, isTsumogiri, isReach, canBeMeld, kanDoraIndicator := d.parser.ParseDiscard()
 
@@ -816,11 +834,11 @@ func (d *roundData) analysis() error {
 
 			if debugMode {
 				if handsCount := util.CountOfTiles34(d.counts); handsCount%3 != 1 {
-					return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts)
+					return fmt.Errorf("手牌错误：%d 张牌 %v", handsCount, d.counts), nil
 				}
 			}
 
-			return nil
+			return nil, nil
 		}
 
 		// 他家舍牌
@@ -888,7 +906,7 @@ func (d *roundData) analysis() error {
 		}
 
 		if d.skipOutput {
-			return nil
+			return nil, nil
 		}
 
 		// 上家舍牌时若无法鸣牌则跳过显示
@@ -906,18 +924,28 @@ func (d *roundData) analysis() error {
 		}
 
 		// 打印他家舍牌信息
-		d.printDiscards()
+		results := webapi.NewResult()
+		results.InitRound(d.roundWindTile, d.players[0].selfWindTile, d.doraIndicators)
+		results.Players = d.printDiscards()
 		fmt.Println()
-		riskTables.printWithHands(d.counts, d.leftCounts)
+		results.Reset()
+		risksInfo, nc, oc := riskTables.printWithHands(d.counts, d.leftCounts)
+		results.Human.RisksInfo = risksInfo
+		results.Human.NCSafeTiles = nc
+		results.Human.OCSafeTiles = oc
 
 		if d.gameMode == gameModeMatch && !canBeMeld {
-			return nil
+			return nil, nil
 		}
 
 		// 为了方便解析牌谱，这里尽可能地解析副露
 		// TODO: 提醒: 消除海底/避免河底
 		allowChi := d.playerNumber != 3 && who == 3 && playerInfo.LeftDrawTilesCount > 0
-		return analysisMeld(writer, playerInfo, discardTile, isRedFive, allowChi, mixedRiskTable)
+		err := analysisMeld(writer, &results, playerInfo, discardTile, isRedFive, allowChi, mixedRiskTable)
+		if err != nil {
+			return err, nil
+		}
+		return nil, &results
 	case d.parser.IsRoundWin():
 		// TODO: 解析天凤牌谱 - 注意 skipOutput
 
@@ -964,5 +992,5 @@ func (d *roundData) analysis() error {
 	default:
 	}
 
-	return nil
+	return nil, nil
 }

@@ -1,0 +1,155 @@
+.tile {
+    width: 2em;
+    margin: 0 2px;
+}
+
+.tile.tsumogiri {
+    filter: opacity(0.5);
+}
+
+.tile.tile-risk-cyan {
+    border: 1px solid cyan;
+}
+
+.tile.tile-risk-yellow {
+    border: 1px solid #ffee00;
+}
+
+.tile.tile-risk-orange {
+    border: 1px solid orange;
+}
+
+.tile.tile-risk-red {
+    border: 1px solid red;
+}
+
+.header-info {
+    display: flex;
+    border-bottom: 1px dotted;
+}
+
+
+.round-info-container {
+    flex: 1;
+}
+
+.round-info-container .tile {
+    vertical-align: middle;
+    width: 1.5rem;
+}
+
+.round-info-container .round-wind-name {
+    margin-right: 0.5rem;
+}
+
+.round-info-container .round-wind {}
+.round-info-container .self-wind {}
+.round-info-container .dora {}
+
+.header-info .players-container {
+    flex: 3;
+    display: flex;
+}
+
+.header-info .players-container .player-panel {
+    min-width: 250px;
+}
+
+.risk-panel .risk-tiles {
+    display: flex;
+}
+
+.risk-panel .risk-tiles .tile {
+    width: 1.5rem;
+    vertical-align: middle;
+}
+
+.risk-panel .risk-info {
+    display: flex;
+}
+
+.risk-panel .risk-info .risk-info-text {
+    margin-left: 10px;
+}
+
+.risk-panel .risk-info .tile {
+    width: 1.5rem;
+    vertical-align: middle;
+}
+
+.human-panel {
+    margin: 5px 0;
+    display: flex;
+}
+
+.human-panel .human-melds {
+    margin-left: 30px;
+    display: flex;
+}
+
+.human-panel .human-melds .melds-panel {
+    margin-left: 20px;
+}
+
+.human-container .tile {
+    width: 2.5em;
+}
+
+.options-group-panel .title {
+    margin-bottom: 0;
+}
+
+table.options-group {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.7rem;
+}
+table.options-group > thead tr {
+    text-align: left;
+}
+tr.option-row {
+    border-bottom: 1px solid;
+}
+
+.option-row .meld-panel .tiles {
+    display: inline-block;
+}
+
+.highlight {
+    background-color: #FFFF00
+}
+
+.yaku-panel span {
+    margin: 1px 2px;
+    border: 1px solid;
+}
+
+.yaku-panel .yaku-none {
+    border: 1px solid red;
+    color: red;
+}
+
+.yaku-panel .yaku {
+    border: 1px solid limegreen;
+    color: limegreen;
+}
+
+.yaku-panel .dora {
+    border: 1px solid limegreen;
+    color: limegreen;
+}
+
+.yaku-panel .part-wait {
+    border: 1px solid orange;
+    color: orange;
+}
+
+.furiten-panel .furiten-maybe {
+    border: 1px solid orange;
+    color: orange;
+}
+
+.furiten-panel .furiten {
+    border: 1px solid red;
+    color: red;
+}

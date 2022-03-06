@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"github.com/EndlessCheng/mahjong-helper/util"
+	"github.com/EndlessCheng/mahjong-helper/webapi"
 	"github.com/fatih/color"
+	"io"
 	"math"
 	"sort"
 	"strings"
-	"io"
 )
 
 func printAccountInfo(accountID int) {
@@ -62,6 +63,15 @@ func (p *playerInfo) printDiscards() {
 	fmt.Println()
 }
 
+func (p *playerInfo) getInfo() webapi.PlayerInfo {
+	info := webapi.PlayerInfo{}
+	info.Name = p.name
+	info.IsNaki = p.isNaki
+	info.DiscardTiles = p.discardTiles
+	info.MeldDiscardsAt = p.meldDiscardsAt
+	return info
+}
+
 //
 
 type handsRisk struct {
@@ -72,11 +82,13 @@ type handsRisk struct {
 // 34 种牌的危险度
 type riskTable util.RiskTiles34
 
-func (t riskTable) printWithHands(hands []int, fixedRiskMulti float64) (containLine bool) {
+func (t riskTable) printWithHands(hands []int, fixedRiskMulti float64) (containLine bool, tilesRisk []webapi.TileRisk) {
+	tilesRisk = []webapi.TileRisk{}
 	// 打印铳率=0的牌（现物，或NC且剩余数=0）
 	safeCount := 0
 	for i, c := range hands {
 		if c > 0 && t[i] == 0 {
+			tilesRisk = append(tilesRisk, webapi.TileRisk{Tile: i, Risk: 0})
 			fmt.Printf(" " + util.MahjongZH[i])
 			safeCount++
 		}
@@ -99,6 +111,7 @@ func (t riskTable) printWithHands(hands []int, fixedRiskMulti float64) (containL
 		}
 		for _, hr := range handsRisks {
 			// 颜色考虑了听牌率
+			tilesRisk = append(tilesRisk, webapi.TileRisk{Tile: hr.tile, Risk: hr.risk * fixedRiskMulti})
 			color.New(getNumRiskColor(hr.risk * fixedRiskMulti)).Printf(" " + util.MahjongZH[hr.tile])
 		}
 	}
@@ -175,7 +188,7 @@ func (l riskInfoList) mixedRiskTable() riskTable {
 	return mixedRiskTable
 }
 
-func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
+func (l riskInfoList) printWithHands(hands []int, leftCounts []int) ([]webapi.RiskInfo, []int, []int) {
 	// 听牌率超过一定值就打印铳率
 	const (
 		minShownTenpaiRate4 = 50.0
@@ -187,18 +200,23 @@ func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
 		minShownTenpaiRate = minShownTenpaiRate3
 	}
 
+	risksInfo := make([]webapi.RiskInfo, 4)
+
 	dangerousPlayerCount := 0
 	// 打印安牌，危险牌
 	names := []string{"", "下家", "对家", "上家"}
 	for i := len(l) - 1; i >= 1; i-- {
 		tenpaiRate := l[i].tenpaiRate
+		risksInfo[i] = webapi.RiskInfo{}
+		risksInfo[i].TenpaiRate = tenpaiRate
 		if len(l[i].riskTable) > 0 && (debugMode || tenpaiRate > minShownTenpaiRate) {
 			dangerousPlayerCount++
 			fmt.Print(names[i] + "安牌:")
 			//if debugMode {
 			//fmt.Printf("(%d*%2.2f%%听牌率)", int(l[i]._ronPoint), l[i].tenpaiRate)
 			//}
-			containLine := l[i].riskTable.printWithHands(hands, tenpaiRate/100)
+			containLine, tilesRisk := l[i].riskTable.printWithHands(hands, tenpaiRate/100)
+			risksInfo[i].TilesRisk = tilesRisk
 
 			// 打印听牌率
 			fmt.Print(" ")
@@ -231,6 +249,8 @@ func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
 			} else {
 				fmt.Printf("[%d无筋]", len(l[i].leftNoSujiTiles))
 			}
+			risksInfo[i].LeftNoSujiTiles = len(l[i].leftNoSujiTiles)
+			risksInfo[i].NoSujiInfo = noSujiInfo
 
 			fmt.Println()
 		}
@@ -246,10 +266,14 @@ func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
 	if dangerousPlayerCount > 0 && mixedPlayers > 1 {
 		fmt.Print("综合安牌:")
 		mixedRiskTable := l.mixedRiskTable()
-		mixedRiskTable.printWithHands(hands, 1)
+		_, tilesRisk := mixedRiskTable.printWithHands(hands, 1)
 		fmt.Println()
+		risksInfo[0] = webapi.RiskInfo{}
+		risksInfo[0].TilesRisk = tilesRisk
 	}
 
+	ncSafeTiles := []int{}
+	ocSafeTiles := []int{}
 	// 打印因 NC OC 产生的安牌
 	// TODO: 重构至其他函数
 	if dangerousPlayerCount > 0 {
@@ -259,6 +283,7 @@ func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
 			fmt.Printf("NC:")
 			for _, safeTile := range ncSafeTileList {
 				fmt.Printf(" " + util.MahjongZH[safeTile.Tile34])
+				ncSafeTiles = append(ncSafeTiles, safeTile.Tile34)
 			}
 			fmt.Println()
 		}
@@ -266,6 +291,7 @@ func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
 			fmt.Printf("OC:")
 			for _, safeTile := range ocSafeTileList {
 				fmt.Printf(" " + util.MahjongZH[safeTile.Tile34])
+				ocSafeTiles = append(ocSafeTiles, safeTile.Tile34)
 			}
 			fmt.Println()
 		}
@@ -301,20 +327,23 @@ func (l riskInfoList) printWithHands(hands []int, leftCounts []int) {
 		//}
 		fmt.Println()
 	}
+	return risksInfo, ncSafeTiles, ocSafeTiles
 }
 
 //
 
-func alertBackwardToShanten2(results util.Hand14AnalysisResultList, incShantenResults util.Hand14AnalysisResultList) {
+func alertBackwardToShanten2(results util.Hand14AnalysisResultList, incShantenResults util.Hand14AnalysisResultList) string {
 	if len(results) == 0 || len(incShantenResults) == 0 {
-		return
+		return ""
 	}
 
 	if results[0].Result13.Waits.AllCount() < 9 {
 		if results[0].Result13.MixedWaitsScore < incShantenResults[0].Result13.MixedWaitsScore {
 			color.HiGreen("向听倒退？")
+			return "向听倒退？"
 		}
 	}
+	return ""
 }
 
 // 需要提醒的役种
@@ -465,19 +494,24 @@ type analysisResult struct {
 
 */
 // 打印何切分析结果（单行）
-func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
+func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer, option *webapi.Option) {
 	discardTile34 := r.discardTile34
 	openTiles34 := r.openTiles34
 	result13 := r.result13
 
 	shanten := result13.Shanten
+	option.Shanten = shanten
 
 	// 进张数
 	waitsCount := result13.Waits.AllCount()
 	c := getWaitsCountColor(shanten, float64(waitsCount))
 	color.New(c).Fprintf(writer, "%2d", waitsCount)
+	option.WaitsCount = waitsCount
+
 	// 改良进张均值
 	if len(result13.Improves) > 0 {
+		option.AvgImproveWaitsCount = result13.AvgImproveWaitsCount
+		option.HighlightAvgImproveWaitsCount = r.highlightAvgImproveWaitsCount
 		if r.highlightAvgImproveWaitsCount {
 			color.New(color.FgHiWhite).Fprintf(writer, "[%5.2f]", result13.AvgImproveWaitsCount)
 		} else {
@@ -499,6 +533,8 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 			}
 			color.New(color.FgHiWhite).Fprintf(writer, "%s%s", string([]rune(util.MahjongZH[openTiles34[0]])[:1]), util.MahjongZH[openTiles34[1]])
 			fmt.Fprintf(writer, "%s,", meldType)
+			option.MeldType = meldType
+			option.OpenTiles = openTiles34
 		}
 		// 舍牌
 		if r.isDiscardTileDora {
@@ -506,6 +542,9 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 		} else {
 			fmt.Fprint(writer, "切")
 		}
+		option.IsDiscardTileDora = r.isDiscardTileDora
+
+		option.DiscardTile = discardTile34
 		tileZH := util.MahjongZH[discardTile34]
 		if discardTile34 >= 27 {
 			tileZH = " " + tileZH
@@ -513,6 +552,7 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 		if r.mixedRiskTable != nil {
 			// 若有实际危险度，则根据实际危险度来显示舍牌危险度
 			risk := r.mixedRiskTable[discardTile34]
+			option.DiscardRisk = risk
 			if risk == 0 {
 				fmt.Fprint(writer, tileZH)
 			} else {
@@ -525,12 +565,16 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 
 	fmt.Fprint(writer, " => ")
 
+	option.FuritenRate = result13.FuritenRate
+	option.IsPartWait = result13.IsPartWait
+	option.AvgAgariRate = result13.AvgAgariRate
 	if shanten >= 1 {
 		// 前进后的进张数均值
 		incShanten := shanten - 1
 		c := getWaitsCountColor(incShanten, result13.AvgNextShantenWaitsCount)
 		color.New(c).Fprintf(writer, "%5.2f", result13.AvgNextShantenWaitsCount)
 		fmt.Fprintf(writer, "%s", util.NumberToChineseShanten(incShanten))
+		option.AvgNextShantenWaitsCount = result13.AvgNextShantenWaitsCount
 		if incShanten >= 1 {
 			//fmt.Fprintf(writer, "进张")
 		} else { // incShanten == 0
@@ -550,6 +594,8 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 	}
 
 	// 手牌速度，用于快速过庄
+	option.MixedWaitsScore = result13.MixedWaitsScore
+	option.HighlightMixedScore = r.highlightMixedScore
 	if result13.MixedWaitsScore > 0 && shanten >= 1 && shanten <= 2 {
 		fmt.Fprint(writer, " ")
 		if r.highlightMixedScore {
@@ -560,6 +606,7 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 	}
 
 	// 局收支
+	option.MixedRoundPoint = int(math.Round(result13.MixedRoundPoint))
 	if showScore && result13.MixedRoundPoint != 0.0 {
 		fmt.Fprint(writer, " ")
 		color.New(color.FgHiGreen).Fprintf(writer, "[局收支%4d]", int(math.Round(result13.MixedRoundPoint)))
@@ -572,6 +619,8 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 		if !result13.IsNaki {
 			ronType = "默听"
 		}
+		option.RonType = ronType
+		option.DamaPoint = int(math.Round(result13.DamaPoint))
 		color.New(color.FgHiGreen).Fprintf(writer, "[%s%d]", ronType, int(math.Round(result13.DamaPoint)))
 	}
 
@@ -579,6 +628,7 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 	if result13.RiichiPoint > 0 {
 		fmt.Fprint(writer, " ")
 		color.New(color.FgHiGreen).Fprintf(writer, "[立直%d]", int(math.Round(result13.RiichiPoint)))
+		option.RiichiPoint = int(math.Round(result13.RiichiPoint))
 	}
 
 	if len(result13.YakuTypes) > 0 {
@@ -597,12 +647,14 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 					sort.Ints(shownYakuTypes)
 					fmt.Fprint(writer, " ")
 					color.New(color.FgHiGreen).Fprintf(writer, util.YakuTypesToStr(shownYakuTypes))
+					option.YakuTypes = shownYakuTypes
 				}
 			} else {
 				// debug
 				fmt.Fprint(writer, " ")
 				color.New(color.FgHiGreen).Fprintf(writer, util.YakuTypesWithDoraToStr(result13.YakuTypes, result13.DoraCount))
 			}
+			option.DoraCount = result13.DoraCount
 			// 片听
 			if result13.IsPartWait {
 				fmt.Fprint(writer, " ")
@@ -613,6 +665,7 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 		// 鸣牌时的无役提示（从听牌到两向听）
 		fmt.Fprint(writer, " ")
 		color.New(color.FgHiRed).Fprintf(writer, "[无役]")
+		option.YakuTypes = []int{-1}
 	}
 
 	// 振听提示
@@ -640,21 +693,30 @@ func (r *analysisResult) printWaitsWithImproves13_oneRow(writer io.Writer) {
 	fmt.Fprint(writer, " ")
 	waitTiles := result13.Waits.AvailableTiles()
 	fmt.Fprint(writer, util.TilesToStrWithBracket(waitTiles))
-
-	//
+	option.WaitTiles = waitTiles
 
 	fmt.Fprintln(writer)
-
+	// FIXME
 	if showImproveDetail {
 		for tile, waits := range result13.Improves {
 			fmt.Fprintf(writer, "摸 %s 改良成 %s\n", util.Mahjong[tile], waits.String())
+			w, idxs := waits.ParseIndex()
+			option.Improves = append(option.Improves, webapi.OptionImprove{
+				Tile:       tile,
+				WaitsCount: w,
+				Indexes:    idxs,
+			})
 		}
 	}
 }
 
-func printResults14WithRisk(writer io.Writer, results14 util.Hand14AnalysisResultList, mixedRiskTable riskTable) {
+func printResults14WithRisk(writer io.Writer, results14 util.Hand14AnalysisResultList, mixedRiskTable riskTable) *webapi.Options {
 	if len(results14) == 0 {
-		return
+		return nil
+	}
+
+	options := webapi.Options{
+		Options: []webapi.Option{},
 	}
 
 	maxMixedScore := -1.0
@@ -672,6 +734,7 @@ func printResults14WithRisk(writer io.Writer, results14 util.Hand14AnalysisResul
 		fmt.Print("鸣牌后")
 	}
 	fmt.Println(util.NumberToChineseShanten(results14[0].Result13.Shanten) + "：")
+	options.Shanten = results14[0].Result13.Shanten
 
 	if results14[0].Result13.Shanten == 0 {
 		// 检查听牌是否一样，但是打点不一样
@@ -706,6 +769,9 @@ func printResults14WithRisk(writer io.Writer, results14 util.Hand14AnalysisResul
 			result.Result13.AvgImproveWaitsCount == maxAvgImproveWaitsCount,
 			result.Result13.MixedWaitsScore == maxMixedScore,
 		}
-		r.printWaitsWithImproves13_oneRow(writer)
+		option := webapi.Option{}
+		r.printWaitsWithImproves13_oneRow(writer, &option)
+		options.Options = append(options.Options, option)
 	}
+	return &options
 }
